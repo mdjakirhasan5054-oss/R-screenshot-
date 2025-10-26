@@ -1,0 +1,95 @@
+require('dotenv').config();
+const express = require('express');
+const fs = require('fs');
+const cors = require('cors');
+const multer = require('multer');
+const fetch = require('node-fetch');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
+
+const PORT = process.env.PORT || 8080;
+const DB_PATH = process.env.DB_PATH || './db.json';
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHANNEL_ID = process.env.CHANNEL_ID;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+// Ensure db exists
+if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify({ users: [] }, null, 2));
+
+// Multer setup
+if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads');
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+});
+const upload = multer({ storage });
+
+// Helpers
+function readDB(){ return JSON.parse(fs.readFileSync(DB_PATH)); }
+function writeDB(data){ fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2)); }
+
+// Register
+app.post('/register', (req,res)=>{
+  const { username } = req.body;
+  if(!username) return res.json({ success:false, message:'username required' });
+  const db = readDB();
+  if(!db.users.find(u=>u.username===username)){
+    db.users.push({ username, balance:0, uploads:0 });
+    writeDB(db);
+  }
+  res.json({ success:true });
+});
+
+// Balance
+app.get('/balance', (req,res)=>{
+  const { username } = req.query;
+  if(!username) return res.json({ balance: 0 });
+  const db = readDB();
+  const user = db.users.find(u=>u.username===username);
+  res.json({ balance: user ? user.balance : 0 });
+});
+
+// Upload Screenshot
+app.post('/upload', upload.single('screenshot'), async (req,res)=>{
+  const { username } = req.body;
+  if(!username) return res.json({ success:false, message:'username required' });
+  if(!req.file) return res.json({ success:false, message:'file required' });
+
+  const db = readDB();
+  const user = db.users.find(u=>u.username===username);
+  if(!user) return res.json({ success:false, message:'user not registered' });
+
+  // limits: max 3 uploads per user
+  if(user.uploads >= 3) return res.json({ success:false, message:'max 3 uploads reached' });
+
+  user.uploads += 1;
+  user.balance = Number((user.balance + 0.15).toFixed(2)); // add ৳0.15
+  writeDB(db);
+
+  // Public file URL (must be a public URL for Telegram)
+  const fileUrl = `${BASE_URL.replace(/\/$/,'')}/uploads/${req.file.filename}`;
+
+  // Send to Telegram (sendPhoto expects either multipart/form-data or a public URL)
+  try {
+    const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: CHANNEL_ID,
+        photo: fileUrl,
+        caption: `📸 New screenshot from ${username}\n💰 Balance: ${user.balance.toFixed(2)}`
+      })
+    });
+    const j = await resp.json();
+    if(!j.ok) console.error('Telegram error:', j);
+  } catch (e){
+    console.error('Telegram send error:', e.message || e);
+  }
+
+  res.json({ success:true, balance: user.balance, uploads: user.uploads });
+});
+
+app.listen(PORT, ()=>console.log(`✅ Server running on port ${PORT}`));
