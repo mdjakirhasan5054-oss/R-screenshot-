@@ -1,0 +1,6 @@
+BOT_TOKEN=7843660568:AAHptMOhSAJ2l6XnLiXyuie8eYKBlL227B8
+CHANNEL_ID=https://t.me/Bdboyonline
+ADMIN_ID=@takemoney2bot
+PORT=8080
+BASE_URL=https://screenshot-2-866c.onrender.com
+DB_PATH=./db.json
